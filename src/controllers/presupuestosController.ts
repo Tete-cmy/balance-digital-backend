@@ -45,14 +45,39 @@ function numero(valor: string | number | null | undefined): number {
 
 async function asegurarCategorias(usuarioId: number): Promise<void> {
   for (const categoria of categoriasFigma) {
-    await pool.query(
+    const [existentes] = await pool.query<CategoriaFila[]>(
+      `
+        SELECT id, nombre, color, icono
+        FROM categorias
+        WHERE usuario_id = ?
+          AND nombre = ?
+        ORDER BY id ASC
+        LIMIT 1
+      `,
+      [usuarioId, categoria.nombre]
+    );
+
+    const existente = existentes[0];
+
+    if (existente) {
+      await pool.query<ResultSetHeader>(
+        `
+          UPDATE categorias
+          SET
+            color = ?,
+            icono = ?
+          WHERE id = ?
+            AND usuario_id = ?
+        `,
+        [categoria.color, categoria.icono, existente.id, usuarioId]
+      );
+      continue;
+    }
+
+    await pool.query<ResultSetHeader>(
       `
         INSERT INTO categorias (usuario_id, nombre, tipo, color, icono)
         VALUES (?, ?, 'gasto', ?, ?)
-        ON DUPLICATE KEY UPDATE
-          tipo = 'gasto',
-          color = VALUES(color),
-          icono = VALUES(icono)
       `,
       [usuarioId, categoria.nombre, categoria.color, categoria.icono]
     );
@@ -208,19 +233,24 @@ export async function obtenerCategoriasPresupuesto(
 
     const [categorias] = await pool.query<CategoriaFila[]>(
       `
-        SELECT id, nombre, color, icono
-        FROM categorias
-        WHERE usuario_id = ?
-          AND nombre IN (
-            'Alimentación',
-            'Vivienda',
-            'Transporte',
-            'Entretenimiento',
-            'Salud',
-            'Educación'
-          )
+        SELECT c.id, c.nombre, c.color, c.icono
+        FROM categorias c
+        INNER JOIN (
+          SELECT MIN(id) AS id
+          FROM categorias
+          WHERE usuario_id = ?
+            AND nombre IN (
+              'Alimentación',
+              'Vivienda',
+              'Transporte',
+              'Entretenimiento',
+              'Salud',
+              'Educación'
+            )
+          GROUP BY nombre
+        ) unicas ON unicas.id = c.id
         ORDER BY FIELD(
-          nombre,
+          c.nombre,
           'Alimentación',
           'Vivienda',
           'Transporte',

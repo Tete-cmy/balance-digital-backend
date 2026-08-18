@@ -1,4 +1,3 @@
-
 import type { Response } from "express";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../config/database";
@@ -53,13 +52,37 @@ function numero(valor: string | number | null | undefined): number {
 
 async function asegurarCategorias(usuarioId: number): Promise<void> {
   for (const categoria of categoriasIniciales) {
-    await pool.query(
+    const [existentes] = await pool.query<CategoriaFila[]>(
+      `
+        SELECT id, nombre, tipo, color
+        FROM categorias
+        WHERE usuario_id = ?
+          AND nombre = ?
+        ORDER BY id ASC
+        LIMIT 1
+      `,
+      [usuarioId, categoria.nombre]
+    );
+
+    const existente = existentes[0];
+
+    if (existente) {
+      await pool.query<ResultSetHeader>(
+        `
+          UPDATE categorias
+          SET color = ?
+          WHERE id = ?
+            AND usuario_id = ?
+        `,
+        [categoria.color, existente.id, usuarioId]
+      );
+      continue;
+    }
+
+    await pool.query<ResultSetHeader>(
       `
         INSERT INTO categorias (usuario_id, nombre, tipo, color)
         VALUES (?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          tipo = VALUES(tipo),
-          color = VALUES(color)
       `,
       [usuarioId, categoria.nombre, categoria.tipo, categoria.color]
     );
@@ -82,21 +105,26 @@ export async function obtenerCategorias(
 
     const [filas] = await pool.query<CategoriaFila[]>(
       `
-        SELECT id, nombre, tipo, color
-        FROM categorias
-        WHERE usuario_id = ?
-          AND nombre IN (
-            'Alimentación',
-            'Entretenimiento',
-            'Transporte',
-            'Vivienda',
-            'Salud',
-            'Nómina',
-            'Freelance',
-            'Inversión'
-          )
+        SELECT c.id, c.nombre, c.tipo, c.color
+        FROM categorias c
+        INNER JOIN (
+          SELECT MIN(id) AS id
+          FROM categorias
+          WHERE usuario_id = ?
+            AND nombre IN (
+              'Alimentación',
+              'Entretenimiento',
+              'Transporte',
+              'Vivienda',
+              'Salud',
+              'Nómina',
+              'Freelance',
+              'Inversión'
+            )
+          GROUP BY nombre
+        ) unicas ON unicas.id = c.id
         ORDER BY FIELD(
-          nombre,
+          c.nombre,
           'Alimentación',
           'Entretenimiento',
           'Transporte',
